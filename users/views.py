@@ -1,3 +1,4 @@
+from drf_spectacular.utils import extend_schema
 from rest_framework import generics, permissions
 from rest_framework.permissions import AllowAny
 
@@ -6,11 +7,65 @@ from users.serializers import UserRegistrationSerializer, ChangePasswordSerializ
 from django.contrib.auth.forms import PasswordResetForm
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.authtoken.models import Token
+from django.contrib.auth import authenticate
+from rest_framework.views import APIView
+
 
 class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = UserRegistrationSerializer
     permission_classes = (permissions.AllowAny,)
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        instance.set_password(serializer.validated_data['password'])
+        instance.save()
+
+    def create(self, request, *args, **kwargs):
+        response = super().create(request, *args, **kwargs)
+        user = User.objects.get(email=request.data['email'])
+        response.data['date_joined'] = user.date_joined
+        return response
+
+
+class LoginView(APIView):
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        request={
+            "application/json": {
+                "type": "object",
+                "properties": {
+                    "username": {"type": "string"},
+                    "password": {"type": "string"},
+                },
+                "required": ["username", "password"]
+            }
+        },
+        responses={
+            200: {
+                "type": "object",
+                "properties": {
+                    "token": {"type": "string"},
+                    "date_joined": {"type": "string", "format": "date-time"},
+                }
+            },
+            400: {"type": "string"}
+        }
+    )
+    def post(self, request):
+        user = authenticate(
+            username=request.data.get("username"),
+            password=request.data.get("password")
+        )
+        if user:
+            token, _ = Token.objects.get_or_create(user=user)
+            return Response({
+                "token": token.key,
+                "date_joined": user.date_joined
+            })
+        return Response({"error": "Invalid credentials"}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class ChangePasswordView(generics.UpdateAPIView):
